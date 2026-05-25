@@ -1,0 +1,28 @@
+# Training Configuration for Sentiment Classifier
+# Customize these settings for different experiments
+
+random_state: 42
+test_size: 0.2
+
+# Vectorization method: 'bow' or 'tfidf'
+vectorizer: 'tfidf'
+
+vectorizer_config:
+  max_features: 5000
+  min_df: 2
+  max_df: 0.95
+  ngram_range: [1, 1]  # (1,1) for unigrams, (1,2) for unigrams+bigrams
+
+# Classifier hyperparameters
+classifiers:
+  logistic_regression:
+    C: 1.0
+    max_iter: 1000
+  
+  svm:
+    C: 1.0
+    max_iter: 1000
+  
+  random_forest:
+    n_estimators: 100
+    max_depth: 10

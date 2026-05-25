@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class VectorizerConfig:
     """Configuration for all vectorizers"""
-    max_features: int = 5000
+    max_features: int = 1_000_000
     min_df: int = 2           # Ignore terms appearing in fewer than min_df documents
     max_df: float = 0.95      # Ignore terms appearing in more than max_df fraction of documents
     ngram_range: Tuple[int, int] = (1, 1)  # (1, 1) for unigrams, (1, 2) for unigrams + bigrams

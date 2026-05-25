@@ -10,6 +10,7 @@ import yaml
 import json
 from pathlib import Path
 from typing import Dict, Any
+import joblib
 
 import pandas as pd
 import numpy as np
@@ -31,6 +32,8 @@ from classifier import (
     ClassifierEnsemble
 )
 
+from dotenv import load_dotenv
+load_dotenv()
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -114,7 +117,7 @@ class SentimentTrainer:
                 'max_features': 5000,
                 'min_df': 2,
                 'max_df': 0.95,
-                'ngram_range': [1, 1]
+                'ngram_range': (1, 1)
             },
             'classifiers': {
                 'logistic_regression': {'C': 1.0, 'max_iter': 1000},
@@ -136,7 +139,7 @@ class SentimentTrainer:
         
         # Combine datasets
         combined_df = pd.concat([amazon_df, twitter_df], ignore_index=True)
-        combined_df = combined_df.sample(frac=1, random_state=self.config['random_state']).reset_index(drop=True)
+        #combined_df = combined_df.sample(frac=1, random_state=self.config['random_state']).reset_index(drop=True)
         
         logger.info(f"Loaded {len(combined_df):,} documents (Amazon: {len(amazon_df):,}, Twitter: {len(twitter_df):,})")
         
@@ -177,13 +180,17 @@ class SentimentTrainer:
             raise ValueError(f"Unknown vectorizer: {vectorizer_type}")
         
         logger.info(f"Vectorizing with {vectorizer_type.upper()}...")
+
+        self.data['X_train'] = [x if isinstance(x, str) else "" for x in self.data['X_train']]
+        self.data['X_test'] = [x if isinstance(x, str) else "" for x in self.data['X_test']]
+
         vectorizer.fit(self.data['X_train'])
         
         X_train_vec = vectorizer.transform(self.data['X_train'])
         X_test_vec = vectorizer.transform(self.data['X_test'])
         
-        self.data['X_train_vec'] = X_train_vec.toarray() if hasattr(X_train_vec, 'toarray') else X_train_vec
-        self.data['X_test_vec'] = X_test_vec.toarray() if hasattr(X_test_vec, 'toarray') else X_test_vec
+        self.data['X_train_vec'] = X_train_vec
+        self.data['X_test_vec'] = X_test_vec
         self.vectorizers['active'] = vectorizer
         
         logger.info(f"Vectorized shape: {self.data['X_train_vec'].shape}")
@@ -191,10 +198,11 @@ class SentimentTrainer:
     
     def train_classifiers(self, experiment_name: str = "sentiment-classification"):
         """Train all classifiers"""
-        mlflow.set_experiment(experiment_name)
-        
+
         ensemble = ClassifierEnsemble()
         
+        os.makedirs("models", exist_ok=True)
+
         for clf_name, clf_params in self.config['classifiers'].items():
             logger.info(f"Training {clf_name}...")
             
@@ -215,6 +223,10 @@ class SentimentTrainer:
                 
                 # Evaluate
                 metrics = classifier.evaluate(self.data['X_test_vec'], self.data['y_test'])
+
+                model_path = os.path.join("models", f"{clf_name}.joblib")
+                joblib.dump(classifier.model, model_path)
+                logger.info(f"Saved {clf_name} model locally to {model_path}")
                 
                 # Log parameters
                 mlflow.log_params(clf_params)
@@ -238,6 +250,10 @@ class SentimentTrainer:
                 
                 ensemble.add_classifier(clf_name, classifier)
         
+        ensemble_path = os.path.join("models", "ensemble_classifier.joblib")
+        joblib.dump(ensemble, ensemble_path)
+        logger.info(f"Saved Ensemble model locally to {ensemble_path}")
+
         self.classifiers['ensemble'] = ensemble
         return self
     
@@ -252,29 +268,32 @@ class SentimentTrainer:
             # Get summary
             summary = ensemble.get_metrics_summary()
             
-            # Log individual classifier metrics
+         # Log individual classifier metrics
             for clf_name, metrics_dict in summary.items():
                 for metric_name, value in metrics_dict.items():
                     if value is not None:
                         mlflow.log_metric(f"{clf_name}/{metric_name}", value)
-            
+
             # Get ensemble predictions
             ensemble_pred_majority = ensemble.predict_ensemble(self.data['X_test_vec'], method='majority_vote')
-            ensemble_metrics = ensemble.evaluate(
-                self.data['X_test_vec'],
-                self.data['y_test'],
-                y_pred=ensemble_pred_majority
-            )
-            
+
+            from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
+            y_test = self.data['y_test']
+
+            acc = accuracy_score(y_test, ensemble_pred_majority)
+            prec = precision_score(y_test, ensemble_pred_majority, average='weighted')
+            rec = recall_score(y_test, ensemble_pred_majority, average='weighted')
+            f1 = f1_score(y_test, ensemble_pred_majority, average='weighted')
+
             # Log ensemble metrics
             mlflow.log_metrics({
-                'ensemble_accuracy': ensemble_metrics.accuracy,
-                'ensemble_precision': ensemble_metrics.precision,
-                'ensemble_recall': ensemble_metrics.recall,
-                'ensemble_f1': ensemble_metrics.f1,
+                'ensemble_accuracy': acc,
+                'ensemble_precision': prec,
+                'ensemble_recall': rec,
+                'ensemble_f1': f1,
             })
             
-            logger.info(f"Ensemble F1: {ensemble_metrics.f1:.4f}")
+            logger.info(f"Ensemble F1: {f1:.4f}")
         
         return self
     
@@ -288,11 +307,9 @@ class SentimentTrainer:
             'vocab_size': len(self.vectorizers['active'].get_feature_names()),
             'num_classifiers': len(self.config['classifiers'])
         }
-        
-        with mlflow.start_run(run_name="metadata", nested=False):
-            for key, value in metadata.items():
-                mlflow.log_param(key, value)
-            mlflow.log_dict(metadata, "training_metadata.json")
+
+        mlflow.log_params(metadata)
+        mlflow.log_dict(metadata, "training_metadata.json")
         
         logger.info("Metadata logged to MLflow")
     
@@ -302,9 +319,13 @@ class SentimentTrainer:
             self.load_data(amazon_path, twitter_path, sample_size)
             self.split_data()
             self.vectorize_data()
-            self.train_classifiers()
-            self.evaluate_ensemble()
-            self.log_metadata()
+
+            mlflow.set_experiment("sentiment-classification")
+
+            with mlflow.start_run(run_name="full_pipeline"):
+                self.train_classifiers()
+                self.evaluate_ensemble()
+                self.log_metadata()
             
             logger.info("Training completed successfully!")
             return self
@@ -330,9 +351,20 @@ def main():
     
     args = parser.parse_args()
     
-    # Setup DagsHub if provided
-    if args.dagshub_repo:
-        DagsHubMLflowSetup.configure(args.dagshub_repo, args.dagshub_token)
+    DAGSHUB_REPO_URL = os.getenv('DAGSHUB_REPO_URL')
+    DAGSHUB_TOKEN = os.getenv('DAGSHUB_TOKEN')
+
+    
+    parts = DAGSHUB_REPO_URL.rstrip('/').split('/')
+    username = parts[-2]
+    repo_name = parts[-1]
+    
+    # Configure MLflow
+    mlflow.set_tracking_uri(f"https://dagshub.com/{username}/{repo_name}.mlflow")
+    os.environ['MLFLOW_TRACKING_USERNAME'] = username
+    os.environ['MLFLOW_TRACKING_PASSWORD'] = DAGSHUB_TOKEN
+    
+    print(f"✓ MLflow configured for DagsHub tracking: {DAGSHUB_REPO_URL}")
     
     # Run training
     trainer = SentimentTrainer(config_path=args.config)

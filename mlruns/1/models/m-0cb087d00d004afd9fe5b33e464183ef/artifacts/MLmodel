@@ -1,0 +1,24 @@
+artifact_path: file:///C:/Users/youss/OneDrive/Desktop/ITI/27- Sequintial modeling
+  and LLMs/Day 1/Lab/sentiment-classifier/mlruns/1/models/m-0cb087d00d004afd9fe5b33e464183ef/artifacts
+flavors:
+  python_function:
+    env:
+      conda: conda.yaml
+      virtualenv: python_env.yaml
+    loader_module: mlflow.sklearn
+    model_path: model.pkl
+    predict_fn: predict
+    python_version: 3.11.15
+  sklearn:
+    code: null
+    pickled_model: model.pkl
+    serialization_format: cloudpickle
+    sklearn_version: 1.8.0
+    skops_trusted_types: null
+mlflow_version: 3.12.0
+model_id: m-0cb087d00d004afd9fe5b33e464183ef
+model_size_bytes: 40711
+model_uuid: m-0cb087d00d004afd9fe5b33e464183ef
+prompts: null
+run_id: 2cb68354cce945dd88c2e8176c58325a
+utc_time_created: '2026-05-25 21:41:17.470428'

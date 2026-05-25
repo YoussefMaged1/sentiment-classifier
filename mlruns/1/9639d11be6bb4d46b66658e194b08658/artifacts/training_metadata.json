@@ -1,0 +1,8 @@
+{
+  "dataset_size": 10000,
+  "train_size": 8000,
+  "test_size": 2000,
+  "vectorizer": "tfidf",
+  "vocab_size": 5000,
+  "num_classifiers": 3
+}
